@@ -5,10 +5,15 @@ import imutils
 import time
 import cv2
 import numpy as np
+from random import shuffle
 from matplotlib import pyplot as plt
+from os import listdir
+from os.path import isfile, join
 
 letters = ["a","i","u","e","o","ka","ki","ku","ke","ko","sa","shi","su","se","so","fu","ha","hi","ho","he","ma","mi","mu","me","mo","n","na","ni","no","nu","ne","ra","ri","ru","re","ro","ta","chi","to","te","tsu","wa","wo","ya","yo","yu"]
 lettersN = range(46)
+filePrefixes = ["a","i","u","e","o","ka","ki","ku","ke","ko","sa","shi","su","se","so","fu","ha","hi","ho","he","ma","mi","mu","me","mo","n_","na","ni","no","nu","ne","ra","ri","ru","re","ro","ta","chi","to","te","tsu","wa","wo","ya","yo","yu", "da", "ji_", "du", "de", "do","zo","ji(shi)","zu","ze","zo","ba","bi","bu","be","bo","pa","pi","pu","pe","po", "ga","gi","gu","ge","go"]
+
 SZ=50
 bin_n = 16 # Number of bins
 affine_flags = cv2.WARP_INVERSE_MAP|cv2.INTER_LINEAR
@@ -149,6 +154,8 @@ def test_kNN_accuracy(x, trainN, testN, name):
 	## TRAINING ###
 	# Make each pictures to 1-dim array (train data) trainN picture per letter
 	train = make_usable_data(x, trainN, 0)
+	print len(train)
+	print len(train[0])
 
 	# Generate integer values for letters
 	train_labels = np.repeat(lettersN, trainN)[:,np.newaxis]
@@ -315,14 +322,231 @@ def rec_from_image(fileLocation, rawdata, hogdata):
 	cv2.imshow("SVMRawImage", SVMRawImage)
 	cv2.imshow("SVMHOGImage", SVMHOGImage)
 
+# TEST
+def test_kNN_HOG_accuracy_full(test_amount):
+	knnRaw = cv2.ml.KNearest_create()
 
-x, hogdata = generate_image_data()
+	folder = "../data/templates/singles_50x50/"
+	files = [f for f in listdir(folder) if isfile(join(folder, f))]
+	fileCounts = []
+	train = []
+	train_labels = []
+	test = []
+	test_labels = []
+	i = 1
+	j = 0
+	for name in filePrefixes:
+		nameFiles = [k for k in files if k.startswith(name)]
+		shuffle(nameFiles)
+		fileCounts.append(len(nameFiles))
+		for fileName in nameFiles:
+			image = cv2.imread(folder + fileName,0)
+			thresh = cv2.threshold(image,220,255,cv2.THRESH_BINARY_INV)[1]
+			thresh = cv2.dilate(thresh, np.ones((3,3),np.uint8), iterations=2)
+			thresh = np.array([thresh])
+			deskewed = [map(deskew,row) for row in thresh]
+			hogData = [map(hog,row) for row in deskewed]
+			if(len(nameFiles) - test_amount < j):
+				test.append(hogData)
+				test_labels.append(filePrefixes.index(name))
+			else:
+				train.append(hogData)
+				train_labels.append(filePrefixes.index(name))
+			j = j+1
+		j=0
+		# print i/71.0 * 100.0
+		i = i+1
+
+	# print fileCounts
+	# # Make images to numpy array
+	x = np.array(train)
+	x = x.reshape(-1,3200).astype(np.float32)
+	knnRaw.train(x, cv2.ml.ROW_SAMPLE, np.array(train_labels))
+
+	y = np.array(test)
+	y = y.reshape(-1,3200).astype(np.float32)
+	ret,result,neighbours,dist = knnRaw.findNearest(y,k=4)
+
+	correct = 0
+	for i in range(len(neighbours)):
+		# print str(neighbours[i]) + " - " + str(test_labels[i]) + " - " + str(result[i])
+		if test_labels[i] == result[i][0]:
+			correct = correct + 1 
+
+	accuracy = correct*100.0/result.size
+	print "kNN - HOG: " + str(accuracy) + "%"
+
+def test_kNN_RAW_accuracy_full(test_amount):
+	knnRaw = cv2.ml.KNearest_create()
+
+	folder = "../data/templates/singles_50x50/"
+	files = [f for f in listdir(folder) if isfile(join(folder, f))]
+	fileCounts = []
+	train = []
+	train_labels = []
+	test = []
+	test_labels = []
+	i = 1
+	j = 0
+	for name in filePrefixes:
+		nameFiles = [k for k in files if k.startswith(name)]
+		shuffle(nameFiles)
+		fileCounts.append(len(nameFiles))
+		for fileName in nameFiles:
+			image = cv2.imread(folder + fileName,0)
+			thresh = cv2.threshold(image,220,255,cv2.THRESH_BINARY_INV)[1]
+			thresh = cv2.dilate(thresh, np.ones((3,3),np.uint8), iterations=2)
+			if(len(nameFiles) - test_amount <= j):
+				test.append(thresh)
+				test_labels.append(filePrefixes.index(name))
+			else:
+				train.append(thresh)
+				train_labels.append(filePrefixes.index(name))
+			j = j+1
+		j=0
+		# print i/71.0 * 100.0
+		i = i+1
+
+	# print fileCounts
+	# # Make images to numpy array
+	x = np.array(train)
+	x = x.reshape(-1,2500).astype(np.float32)
+	knnRaw.train(x, cv2.ml.ROW_SAMPLE, np.array(train_labels))
+
+	y = np.array(test)
+	y = y.reshape(-1,2500).astype(np.float32)
+	ret,result,neighbours,dist = knnRaw.findNearest(y,k=4)
+	correct = 0
+	for i in range(len(neighbours)):
+		# print str(neighbours[i]) + " - " + str(test_labels[i]) + " - " + str(result[i])
+		if test_labels[i] == result[i][0]:
+			correct = correct + 1 
+
+	accuracy = correct*100.0/result.size
+	print "kNN - RAW: " + str(accuracy) + "%"
+
+def test_SVM_RAW_accuracy_full(test_amount):
+	svm = cv2.ml.SVM_create()
+	svm.setGamma(SVM_GAMMA)
+	svm.setC(SVM_C)
+	svm.setKernel(cv2.ml.SVM_LINEAR)
+	svm.setType(cv2.ml.SVM_C_SVC)
+
+	folder = "../data/templates/singles_50x50/"
+	files = [f for f in listdir(folder) if isfile(join(folder, f))]
+	fileCounts = []
+	train = []
+	train_labels = []
+	test = []
+	test_labels = []
+	i = 1
+	j = 0
+	for name in filePrefixes:
+		nameFiles = [k for k in files if k.startswith(name)]
+		shuffle(nameFiles)
+		fileCounts.append(len(nameFiles))
+		for fileName in nameFiles:
+			image = cv2.imread(folder + fileName,0)
+			thresh = cv2.threshold(image,220,255,cv2.THRESH_BINARY_INV)[1]
+			thresh = cv2.dilate(thresh, np.ones((3,3),np.uint8), iterations=2)
+			if(len(nameFiles) - test_amount <= j):
+				test.append(thresh)
+				test_labels.append(filePrefixes.index(name))
+			else:
+				train.append(thresh)
+				train_labels.append(filePrefixes.index(name))
+			j = j+1
+		j=0
+		# print i/71.0 * 100.0
+		i = i+1
+
+	# print fileCounts
+	# # Make images to numpy array
+	x = np.array(train)
+	x = x.reshape(-1,2500).astype(np.float32)
+	ok = svm.train(x,cv2.ml.ROW_SAMPLE,np.array(train_labels))
+
+	y = np.array(test)
+	y = y.reshape(-1,2500).astype(np.float32)
+	result = svm.predict(y)
+	correct = 0
+	for i in range(len(result[1])):
+		# print str(test_labels[i]) + " - " + str(result[1][i][0])
+		if test_labels[i] == result[1][i][0]:
+			correct = correct + 1 
+
+	accuracy = correct*100.0/result[1].size
+	print "SVM - RAW: " + str(accuracy) + "%"
+
+def test_SVM_HOG_accuracy_full(test_amount):
+	svm = cv2.ml.SVM_create()
+	svm.setGamma(SVM_GAMMA)
+	svm.setC(SVM_C)
+	svm.setKernel(cv2.ml.SVM_LINEAR)
+	svm.setType(cv2.ml.SVM_C_SVC)
+
+	folder = "../data/templates/singles_50x50/"
+	files = [f for f in listdir(folder) if isfile(join(folder, f))]
+	fileCounts = []
+	train = []
+	train_labels = []
+	test = []
+	test_labels = []
+	i = 1
+	j = 0
+	for name in filePrefixes:
+		nameFiles = [k for k in files if k.startswith(name)]
+		shuffle(nameFiles)
+		fileCounts.append(len(nameFiles))
+		for fileName in nameFiles:
+			image = cv2.imread(folder + fileName,0)
+			thresh = cv2.threshold(image,220,255,cv2.THRESH_BINARY_INV)[1]
+			thresh = cv2.dilate(thresh, np.ones((3,3),np.uint8), iterations=2)
+			thresh = np.array([thresh])
+			deskewed = [map(deskew,row) for row in thresh]
+			hogData = [map(hog,row) for row in deskewed]
+			if(len(nameFiles) - test_amount < j):
+				test.append(hogData)
+				test_labels.append(filePrefixes.index(name))
+			else:
+				train.append(hogData)
+				train_labels.append(filePrefixes.index(name))
+			j = j+1
+		j=0
+		# print i/71.0 * 100.0
+		i = i+1
+
+	# print fileCounts
+	# # Make images to numpy array
+	x = np.array(train)
+	x = x.reshape(-1,3200).astype(np.float32)
+	ok = svm.train(x,cv2.ml.ROW_SAMPLE,np.array(train_labels))
+
+	y = np.array(test)
+	y = y.reshape(-1,3200).astype(np.float32)
+	result = svm.predict(y)
+	correct = 0
+	for i in range(len(result[1])):
+		# print str(test_labels[i]) + " - " + str(result[1][i][0])
+		if test_labels[i] == result[1][i][0]:
+			correct = correct + 1 
+
+	accuracy = correct*100.0/result[1].size
+	print "SVM - HOG: " + str(accuracy) + "%"
+
+
+# x, hogdata = generate_image_data()
+
 # test_kNN_accuracy(x,8,2, "kNN: Raw-Data accuracy: ") # kNN with raw pixel data
 # test_kNN_accuracy(hogdata,8,2, "kNN: HOG data accuracy: ") # kNN with HOG data
 # test_SVM_accuracy(x,8,2, "SVM: Raw-Data data accuracy: ") # SVM with raw pixel data
 # test_SVM_accuracy(hogdata,8,2, "SVM: HOG data accuracy: ") # SVM with HOG data
 
-testFile = "../data/long/nihon.png"
-rec_from_image(testFile, x, hogdata)
+# testFile = "../data/long/nihon.png"
+# rec_from_image(testFile, x, hogdata)
 
+test_kNN_HOG_accuracy_full(80)
+test_kNN_RAW_accuracy_full(80)
+test_SVM_RAW_accuracy_full(80)
+test_SVM_HOG_accuracy_full(80)
 cv2.waitKey(0)
