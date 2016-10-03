@@ -96,7 +96,7 @@ def generate_image_data():
 				thresh = cv2.dilate(thresh, np.ones((3,3),np.uint8), iterations=2)
 				cells.append(thresh)
 
-	# Make images to numpy array
+	# Make images to np array
 	x = np.array(cells)
 	deskewed = [map(deskew,row) for row in x]
 	hogdata = [map(hog,row) for row in deskewed]
@@ -358,7 +358,7 @@ def test_kNN_HOG_accuracy_full(test_amount):
 		i = i+1
 
 	# print fileCounts
-	# # Make images to numpy array
+	# # Make images to np array
 	x = np.array(train)
 	x = x.reshape(-1,3200).astype(np.float32)
 	knnRaw.train(x, cv2.ml.ROW_SAMPLE, np.array(train_labels))
@@ -408,7 +408,7 @@ def test_kNN_RAW_accuracy_full(test_amount):
 		i = i+1
 
 	# print fileCounts
-	# # Make images to numpy array
+	# # Make images to np array
 	x = np.array(train)
 	x = x.reshape(-1,2500).astype(np.float32)
 	knnRaw.train(x, cv2.ml.ROW_SAMPLE, np.array(train_labels))
@@ -461,7 +461,7 @@ def test_SVM_RAW_accuracy_full(test_amount):
 		i = i+1
 
 	# print fileCounts
-	# # Make images to numpy array
+	# # Make images to np array
 	x = np.array(train)
 	x = x.reshape(-1,2500).astype(np.float32)
 	ok = svm.train(x,cv2.ml.ROW_SAMPLE,np.array(train_labels))
@@ -517,7 +517,7 @@ def test_SVM_HOG_accuracy_full(test_amount):
 		i = i+1
 
 	# print fileCounts
-	# # Make images to numpy array
+	# # Make images to np array
 	x = np.array(train)
 	x = x.reshape(-1,3200).astype(np.float32)
 	ok = svm.train(x,cv2.ml.ROW_SAMPLE,np.array(train_labels))
@@ -533,6 +533,79 @@ def test_SVM_HOG_accuracy_full(test_amount):
 
 	accuracy = correct*100.0/result[1].size
 	print "SVM - HOG: " + str(accuracy) + "%"
+####################################################################
+# From https://gist.github.com/moshekaplan/5106221#file-test_surf-py
+def filter_matches(kp1, kp2, matches, ratio = 0.75):
+	mkp1, mkp2 = [], []
+	for m in matches:
+		if len(m) == 2 and m[0].distance < m[1].distance * ratio:
+			m = m[0]
+			mkp1.append( kp1[m.queryIdx] )
+			mkp2.append( kp2[m.trainIdx] )
+	kp_pairs = zip(mkp1, mkp2)
+	return kp_pairs
+
+def explore_match(win, img1, img2, kp_pairs, status = None, H = None):
+    h1, w1 = img1.shape[:2]
+    h2, w2 = img2.shape[:2]
+    vis = np.zeros((max(h1, h2), w1+w2), np.uint8)
+    vis[:h1, :w1] = img1
+    vis[:h2, w1:w1+w2] = img2
+    vis = cv2.cvtColor(vis, cv2.COLOR_GRAY2BGR)
+
+    if H is not None:
+        corners = np.float32([[0, 0], [w1, 0], [w1, h1], [0, h1]])
+        corners = np.int32( cv2.perspectiveTransform(corners.reshape(1, -1, 2), H).reshape(-1, 2) + (w1, 0) )
+        cv2.polylines(vis, [corners], True, (255, 255, 255))
+
+    if status is None:
+        status = np.ones(len(kp_pairs), np.bool_)
+    p1 = np.int32([kpp[0].pt for kpp in kp_pairs])
+    p2 = np.int32([kpp[1].pt for kpp in kp_pairs]) + (w1, 0)
+
+    green = (0, 255, 0)
+    red = (0, 0, 255)
+    white = (255, 255, 255)
+    kp_color = (51, 103, 236)
+    for (x1, y1), (x2, y2), inlier in zip(p1, p2, status):
+        if inlier:
+            col = green
+            cv2.circle(vis, (x1, y1), 2, col, -1)
+            cv2.circle(vis, (x2, y2), 2, col, -1)
+        else:
+            col = red
+            r = 2
+            thickness = 3
+            cv2.line(vis, (x1-r, y1-r), (x1+r, y1+r), col, thickness)
+            cv2.line(vis, (x1-r, y1+r), (x1+r, y1-r), col, thickness)
+            cv2.line(vis, (x2-r, y2-r), (x2+r, y2+r), col, thickness)
+            cv2.line(vis, (x2-r, y2+r), (x2+r, y2-r), col, thickness)
+    vis0 = vis.copy()
+    for (x1, y1), (x2, y2), inlier in zip(p1, p2, status):
+        if inlier:
+            cv2.line(vis, (x1, y1), (x2, y2), green)
+
+    cv2.imshow(win, vis)
+
+
+  
+def draw_matches(window_name, kp_pairs, img1, img2):
+    """Draws the matches for """
+    mkp1, mkp2 = zip(*kp_pairs)
+    
+    p1 = np.float32([kp.pt for kp in mkp1])
+    p2 = np.float32([kp.pt for kp in mkp2])
+    
+    if len(kp_pairs) >= 4:
+        H, status = cv2.findHomography(p1, p2, cv2.RANSAC, 5.0)
+        #print '%d / %d  inliers/matched' % (np.sum(status), len(status))
+    else:
+        H, status = None, None
+        #print '%d matches found, not enough for homography estimation' % len(p1)
+    
+    if len(p1):
+		explore_match(window_name, img1, img2, kp_pairs, status, H)
+####################################################################
 
 
 # x, hogdata = generate_image_data()
@@ -545,8 +618,40 @@ def test_SVM_HOG_accuracy_full(test_amount):
 # testFile = "../data/long/nihon.png"
 # rec_from_image(testFile, x, hogdata)
 
-test_kNN_HOG_accuracy_full(80)
-test_kNN_RAW_accuracy_full(80)
-test_SVM_RAW_accuracy_full(80)
-test_SVM_HOG_accuracy_full(80)
+# Test with whole dataset.
+# test_kNN_HOG_accuracy_full(80)
+# test_kNN_RAW_accuracy_full(80)
+# test_SVM_RAW_accuracy_full(80)
+# test_SVM_HOG_accuracy_full(80)
+
+folder = "../data/templates/singles_50x50/"
+surf = cv2.SURF(100)
+surf.extended = True
+files = ["ba_86.png","go_172.png","po_64.png","hi_157.png","de_28.png","go_111.png","ho_91.png","ya_134.png","to_169.png","ki_166.png"]
+matcher = cv2.BFMatcher(cv2.NORM_L2)
+
+
+# for file in files:
+# 	image = cv2.imread(folder + file, 0)
+# 	kp, des = surf.detectAndCompute(image, None)
+# 	print len(kp)
+# 	img2 = cv2.drawKeypoints(image,kp,None,(255,0,0),4)
+
+image1 = cv2.imread(folder + files[1], 0)
+kp1, des1 = surf.detectAndCompute(image1, None)
+# image1keypoints = cv2.drawKeypoints(image1,kp1,None,(255,0,0),4)
+
+image2 = cv2.imread(folder + files[3], 0)
+kp2, des2 = surf.detectAndCompute(image2, None)
+# image2keypoints = cv2.drawKeypoints(image2,kp2,None,(255,0,0),4)
+
+print len(kp1)
+print len(kp2)
+print len(des1)
+print len(des2)
+
+raw_matches = matcher.knnMatch(des1, trainDescriptors = des2, k = 2) #2
+kp_pairs = filter_matches(kp1, kp2, raw_matches)
+draw_matches("test", kp_pairs, image1, image2)
+
 cv2.waitKey(0)
